@@ -121,21 +121,57 @@ function create_table() {
 
 	table_path="$DB_PATH/$db_name/$table_name"
 
-	if [ -f "$table_path" ];
-	then
+	if [ -f "$table_path" ]; then
 		echo "Table already exists"
 	else
-		read -p "Enter column names (seperated by comma) : " columns
+		read -p "Enter column names (separated by comma) : " columns
 		read -p "Enter primary key column : " primary_key
 
-		echo "$columns" > "$table_path.meta"
+		IFS=',' read -a columns_array <<< "$columns"
+		metadata=""
+
+		pk=0 # Primary key flag also for keeping track of the column number of the pk
+		while [ $pk -eq 0 ]; do
+			i=0
+			for column in "${columns_array[@]}"; do
+				i=$((i+1))
+				if [ "$column" == "$primary_key" ]; then
+					pk=$i
+					break
+				fi
+			done
+			if [ $pk -eq 0 ]; then
+				read -p "Primary key not found in the columns. Please enter primary key column : " primary_key
+			else
+				primary_key+=":$pk"
+			fi
+		done
+
+		for column in "${columns_array[@]}"; do
+			read -p "Enter datatype for column $column : " datatype
+			while true; do
+				if [ "$datatype" == "number" ] || [ "$datatype" == "string" ]; then
+					break
+				else
+					echo "Invalid datatype. Please enter 'number' or 'string'."
+					read -p "Enter datatype for column $column : " datatype
+				fi
+			done
+			metadata+="$column:$datatype,"
+		done
+
+		metadata=${metadata%,} # Remove trailing comma
+		echo "$metadata" > "$table_path.meta"
 		echo "$primary_key" >> "$table_path.meta"
 
 		touch "$table_path"
 
 		echo "Table [ $table_name ] has been created successfully."
+		
 	fi
+	
 }
+
 
 function list_tables() {
 	db_name=$1
