@@ -271,16 +271,103 @@ function insert_into_table() {
 }
 
 function select_from_table() {
-	db_name=$1
-	read -p "Enter table name : " table_name
-	cat $DB_PATH/$db_name/$table_name
+    db_name=$1
+    
+    read -p "Enter table name: " table_name
+    table_path="$DB_PATH/$db_name/$table_name"
+
+    if [ ! -f "$table_path" ]; then
+        echo "Table does not exist!"
+        return
+    fi
+
+    # Read column names and metadata
+    IFS=',' read -a columns < "$table_path.meta"
+    echo "Available columns: ${columns[*]}"
+
+    read -p "Enter condition (e.g., column=value) or type 'all' for everything: " condition
+
+    echo -e "\nResults:"
+    echo "${columns[*]}"  # Print header
+
+    # Read table data and process each row
+    while IFS=',' read -r -a row; do
+        if [[ "$condition" == "all" ]]; then
+            echo "${row[*]}"
+        else
+            column_name=$(echo "$condition" | cut -d'=' -f1 | xargs)
+            column_value=$(echo "$condition" | cut -d'=' -f2 | xargs)
+
+            # Find column index
+            index=-1
+            for i in "${!columns[@]}"; do
+                col_name=$(echo "${columns[i]}" | cut -d':' -f1)  # Extract column name
+                if [[ "$col_name" == "$column_name" ]]; then
+                    index=$i
+                    break
+                fi
+            done
+
+            # If column exists and value matches, print row
+            if [[ $index -ne -1 && "${row[index]}" == "$column_value" ]]; then
+                echo "${row[*]}"
+            fi
+        fi
+    done < "$table_path"
 }
 
-
 function delete_from_table() {
-	db_name=$1
+    db_name=$1
 
-	echo "DELETE FUNCTION"
+    read -p "Enter table name: " table_name
+    table_path="$DB_PATH/$db_name/$table_name"
+
+    if [ ! -f "$table_path" ]; then
+        echo "Table does not exist!"
+        return
+    fi
+
+    # Read column names
+    IFS=',' read -a columns < "$table_path.meta"
+    echo "Available columns: ${columns[*]}"
+
+    read -p "Enter condition (e.g., column=value) or type 'all' to delete everything: " condition
+
+    if [[ "$condition" == "all" ]]; then
+        > "$table_path"  # Clear file contents but keep metadata
+        echo "All records deleted from '$table_name'."
+        return
+    fi
+
+    # Extract column name and value from condition
+    column_name=$(echo "$condition" | cut -d'=' -f1 | xargs)
+    column_value=$(echo "$condition" | cut -d'=' -f2 | xargs)
+
+    # Find the column index
+    index=-1
+    for i in "${!columns[@]}"; do
+        col_name=$(echo "${columns[i]}" | cut -d':' -f1)  # Extract column name
+        if [[ "$col_name" == "$column_name" ]]; then
+            index=$i
+            break
+        fi
+    done
+
+    if [[ $index -eq -1 ]]; then
+        echo "Column '$column_name' does not exist!"
+        return
+    fi
+
+    # Filter out matching rows and write back the file
+    temp_file=$(mktemp)
+    while IFS=',' read -r -a row; do
+        if [[ "${row[index]}" != "$column_value" ]]; then
+            echo "${row[*]}" >> "$temp_file"
+        fi
+    done < "$table_path"
+
+    mv "$temp_file" "$table_path"
+    echo "Records matching '$condition' deleted successfully from '$table_name'."
 }
 
 function update_table() {
