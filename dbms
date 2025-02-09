@@ -286,7 +286,90 @@ function delete_from_table() {
 function update_table() {
 	db_name=$1
 
-	echo "UPDATE FUNCTION"
+	read -p "Enter table name : " table_name
+	table_path="$DB_PATH/$db_name/$table_name"
+
+while [ ! -f "$table_path" ]; do
+	echo "Table does not exist"
+	read -p "Enter table name : " table_name
+	table_path="$DB_PATH/$db_name/$table_name"
+done
+
+header=$(head -n 1 "$table_path.meta") # ==> key,value:key,value,....
+IFS=',' read -a columns <<< "$header"
+
+	primary_key=$(tail -n 1 "$table_path.meta" | awk -F: '{print $1}') #==> pramary_key:col_num
+	pk_col_num=$(tail -n 1 "$table_path.meta" | awk -F: '{print $2}')
+	pk_values=$(awk -F, '{print $'$pk_col_num'}' "$table_path")
+
+	read -p "Enter primary key value : " pk_value
+
+	# Check if primary key exists
+	while [[ ! "$pk_values" == *"$pk_value"* ]]; do
+		echo "Primary key value does not exist"
+		read -p "Enter primary key value : " pk_value
+	done
+
+	#get the record
+	old_record=$(awk -F, '{if($'$pk_col_num' == "'$pk_value'") print $0}' "$table_path")
+
+	# read metadata
+
+	for column in "${columns[@]}" #==> column --> col:type
+	do
+		column_name=$(echo "$column" | awk -F: '{print $1}')
+		column_type=$(echo "$column" | awk -F: '{print $2}')
+		
+		read -p "Enter value for $column_name : " value
+
+
+		# Check if primary key and if so check if value already exists
+		if [ "$column_name" == "$primary_key" ]; then
+			while true
+			do
+				if [[ "$pk_values" == *"$value"* ]]; then  # *"$value"* to check if this substring exists in the string
+					echo "Primary key value already exists"
+					read -p "Enter value for $column_name : " value
+				else
+					break
+				fi
+			done
+		fi
+
+		# Validate numbers
+		if [[ "$column_type" == "number" ]]; then
+			while true; do
+				if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+					echo "Invalid value for $column_name"
+					read -p "Enter value for $column_name : " value
+				else
+					break
+				fi
+			done
+
+		fi
+
+		# Validate strings
+		if [[ "$column_type" == "string" ]]; then
+			while true; do
+				if [[ ! "$value" =~ ^[a-zA-Z]+$ ]]; then
+					echo "Invalid value for $column_name"
+					read -p "Enter value for $column_name : " value
+				else
+					break
+				fi
+			done
+		fi
+		values+="$value," # ==> value1,value2,value3,....
+	done
+	values=${values%,} # Remove trailing comma from the last value
+
+	# Update the record
+	sed -i 's/^'$old_record'$/'$values'/' "$table_path"
+
+	echo "Record updated successfully"
+
+	
 }
 
 main_menu
