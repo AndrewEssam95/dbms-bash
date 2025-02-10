@@ -112,6 +112,76 @@ do
 	esac
 done
 }
+#################### DATABASE MENU FUNCTIONS ######################
+function extract_metadata() {
+    local table_path=$1
+    declare -gA columns_types
+    header=$(head -n 1 "$table_path.meta")
+    IFS=',' read -a columns <<< "$header"
+    primary_key=$(tail -n 1 "$table_path.meta" | awk -F: '{print $1}')
+    pk_col_num=$(tail -n 1 "$table_path.meta" | awk -F: '{print $2}')
+    pk_values=$(awk -F, '{print $'$pk_col_num'}' "$table_path")
+}
+
+function validate_input() {
+    local column_name=$1
+    local column_type=$2
+    local value=$3
+
+    if [[ "$column_type" == "number" ]]; then
+        while [[ ! "$value" =~ ^[0-9]+$ ]]; do
+            echo "Invalid value for $column_name (must be a number)" >&2
+            read -p "Enter value for $column_name : " value
+        done
+    elif [[ "$column_type" == "string" ]]; then
+        while [[ ! "$value" =~ ^[a-zA-Z]+$ ]]; do
+            echo "Invalid value for $column_name (must be a string)" >&2
+            read -p "Enter value for $column_name : " value
+        done
+    fi
+
+    echo "$value"
+}
+
+function validate_name() {
+    local name=$1
+    while [[ ! "$name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; do
+        echo "Invalid name. Name must start with a letter or underscore and contain only letters, numbers, or underscores."
+        read -p "Enter a valid name : " name
+    done
+    echo "$name"
+}
+
+function get_inputs() {
+    local table_path=$1
+    local primary_key=$2
+    local pk_values=$3
+    local pk_col_num=$4
+
+    values=""
+    for column in "${columns[@]}"; do
+        column_name=$(echo "$column" | awk -F: '{print $1}')
+        column_type=$(echo "$column" | awk -F: '{print $2}')
+
+        read -p "Enter value for $column_name : " value
+
+        # Check if primary key and if so, check if value already exists
+        if [ "$column_name" == "$primary_key" ]; then
+            while [[ "$pk_values" == *"$value"* ]]; do
+                echo "Primary key value already exists" >&2
+                read -p "Enter value for $column_name : " value
+            done
+        fi
+
+        # Validate input based on column type
+        value=$(validate_input "$column_name" "$column_type" "$value")
+        values+="$value,"
+    done
+
+    values=${values%,}  # Remove trailing comma
+    echo "$values"
+}
+
 
 #################### DATABASE MENU FUNCTIONS ######################
 function create_table() {
@@ -196,78 +266,28 @@ function drop_table() {
 }
 
 function insert_into_table() {
-	
-	db_name=$1
-	read -p "Enter table name : " table_name
-	table_path="$DB_PATH/$db_name/$table_name"
+    db_name=$1
+    read -p "Enter table name : " table_name
+    table_name=$(validate_name "$table_name")
+    table_path="$DB_PATH/$db_name/$table_name"
 
-	#create table if not exists
-	while [ ! -f "$table_path" ]; do
-		echo "Table does not exist"
-		read -p "Enter table name : " table_name
-		table_path="$DB_PATH/$db_name/$table_name"
-	done
-	
-	# read metadata
-	declare -A columns_types
-	header=$(head -n 1 "$table_path.meta") # ==> key,value:key,value,....
-	IFS=',' read -a columns <<< "$header"
+    # Check if table exists
+    while [ ! -f "$table_path" ]; do
+        echo "Table does not exist" >&2
+        read -p "Enter table name : " table_name
+        table_name=$(validate_name "$table_name")
+        table_path="$DB_PATH/$db_name/$table_name"
+    done
 
-	primary_key=$(tail -n 1 "$table_path.meta" | awk -F: '{print $1}') #==> pramary_key:col_num
-	pk_col_num=$(tail -n 1 "$table_path.meta" | awk -F: '{print $2}')
-	pk_values=$(awk -F, '{print $'$pk_col_num'}' "$table_path")
-	
-	values=""
-	for column in "${columns[@]}" #==> column --> col:type
-	do
-		column_name=$(echo "$column" | awk -F: '{print $1}')
-		column_type=$(echo "$column" | awk -F: '{print $2}')
-		
-		read -p "Enter value for $column_name : " value
+    # Extract metadata
+    extract_metadata "$table_path"
 
-		# Check if primary key and if so check if value already exists
-		if [ "$column_name" == "$primary_key" ]; then
-			while true
-			do
-				if [[ "$pk_values" == *"$value"* ]]; then  # *"$value"* to check if this substring exists in the string
-					echo "Primary key value already exists"
-					read -p "Enter value for $column_name : " value
-				else
-					break
-				fi
-			done
-		fi
+    # Get inputs from the user
+    values=$(get_inputs "$table_path" "$primary_key" "$pk_values" "$pk_col_num")
 
-		# Validate numbers
-		if [[ "$column_type" == "number" ]]; then
-			while true; do
-				if [[ ! "$value" =~ ^[0-9]+$ ]]; then
-					echo "Invalid value for $column_name"
-					read -p "Enter value for $column_name : " value
-				else
-					break
-				fi
-			done
-
-		fi
-
-		# Validate strings
-		if [[ "$column_type" == "string" ]]; then
-			while true; do
-				if [[ ! "$value" =~ ^[a-zA-Z]+$ ]]; then
-					echo "Invalid value for $column_name"
-					read -p "Enter value for $column_name : " value
-				else
-					break
-				fi
-			done
-		fi
-		values+="$value," # ==> value1,value2,value3,....
-	done
-	values=${values%,} # Remove trailing comma from the last value
-	echo $values >> "$table_path"
-	echo "Record inserted successfully"
-	
+    # Insert the record (only valid data)
+    echo "$values" >> "$table_path"
+    echo "Record inserted successfully" >&2
 }
 
 function select_from_table() {
@@ -371,92 +391,38 @@ function delete_from_table() {
 }
 
 function update_table() {
-	db_name=$1
+    db_name=$1
+    read -p "Enter table name : " table_name
+    table_name=$(validate_name "$table_name")
+    table_path="$DB_PATH/$db_name/$table_name"
 
-	read -p "Enter table name : " table_name
-	table_path="$DB_PATH/$db_name/$table_name"
+    # Check if table exists
+    while [ ! -f "$table_path" ]; do
+        echo "Table does not exist" >&2
+        read -p "Enter table name : " table_name
+        table_name=$(validate_name "$table_name")
+        table_path="$DB_PATH/$db_name/$table_name"
+    done
 
-while [ ! -f "$table_path" ]; do
-	echo "Table does not exist"
-	read -p "Enter table name : " table_name
-	table_path="$DB_PATH/$db_name/$table_name"
-done
+    # Extract metadata
+    extract_metadata "$table_path"
 
-header=$(head -n 1 "$table_path.meta") # ==> key,value:key,value,....
-IFS=',' read -a columns <<< "$header"
+    # Get primary key value
+    read -p "Enter primary key value : " pk_value
+    while [[ ! "$pk_values" == *"$pk_value"* ]]; do
+        echo "Primary key value does not exist" >&2
+        read -p "Enter primary key value : " pk_value
+    done
 
-	primary_key=$(tail -n 1 "$table_path.meta" | awk -F: '{print $1}') #==> pramary_key:col_num
-	pk_col_num=$(tail -n 1 "$table_path.meta" | awk -F: '{print $2}')
-	pk_values=$(awk -F, '{print $'$pk_col_num'}' "$table_path")
+    # Get the old record
+    old_record=$(awk -F, '{if($'$pk_col_num' == "'$pk_value'") print $0}' "$table_path")
 
-	read -p "Enter primary key value : " pk_value
+    # Get new inputs from the user
+    values=$(get_inputs "$table_path" "$primary_key" "$pk_values" "$pk_col_num")
 
-	# Check if primary key exists
-	while [[ ! "$pk_values" == *"$pk_value"* ]]; do
-		echo "Primary key value does not exist"
-		read -p "Enter primary key value : " pk_value
-	done
-
-	#get the record
-	old_record=$(awk -F, '{if($'$pk_col_num' == "'$pk_value'") print $0}' "$table_path")
-
-	# read metadata
-
-	for column in "${columns[@]}" #==> column --> col:type
-	do
-		column_name=$(echo "$column" | awk -F: '{print $1}')
-		column_type=$(echo "$column" | awk -F: '{print $2}')
-		
-		read -p "Enter value for $column_name : " value
-
-
-		# Check if primary key and if so check if value already exists
-		if [ "$column_name" == "$primary_key" ]; then
-			while true
-			do
-				if [[ "$pk_values" == *"$value"* ]]; then  # *"$value"* to check if this substring exists in the string
-					echo "Primary key value already exists"
-					read -p "Enter value for $column_name : " value
-				else
-					break
-				fi
-			done
-		fi
-
-		# Validate numbers
-		if [[ "$column_type" == "number" ]]; then
-			while true; do
-				if [[ ! "$value" =~ ^[0-9]+$ ]]; then
-					echo "Invalid value for $column_name"
-					read -p "Enter value for $column_name : " value
-				else
-					break
-				fi
-			done
-
-		fi
-
-		# Validate strings
-		if [[ "$column_type" == "string" ]]; then
-			while true; do
-				if [[ ! "$value" =~ ^[a-zA-Z]+$ ]]; then
-					echo "Invalid value for $column_name"
-					read -p "Enter value for $column_name : " value
-				else
-					break
-				fi
-			done
-		fi
-		values+="$value," # ==> value1,value2,value3,....
-	done
-	values=${values%,} # Remove trailing comma from the last value
-
-	# Update the record
-	sed -i 's/^'$old_record'$/'$values'/' "$table_path"
-
-	echo "Record updated successfully"
-
-	
+    # Update the record
+    sed -i 's/^'"$old_record"'$/'"$values"'/' "$table_path"
+    echo "Record updated successfully" >&2
 }
 
 main_menu
